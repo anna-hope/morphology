@@ -6,15 +6,16 @@ from argparse import ArgumentParser
 from collections import Counter, defaultdict
 from copy import deepcopy
 from functools import partial
-from itertools import combinations, filterfalse
+from itertools import combinations
+from math import log2
 from pathlib import Path
 from random import randint
 import re
-from statistics import mean
+from statistics import mean, median_low
+from pprint import pprint
 
 
 from morphology import Trie
-
 
 
 class EndingTrie(Trie):
@@ -84,7 +85,7 @@ class EndingTrie(Trie):
 
 
     def collapse_endings(self):
-        self.filter_rare_endings()
+        #self.filter_rare_endings()
 
         keep_going = True
 
@@ -108,11 +109,15 @@ class EndingTrie(Trie):
                         if len(ending) > 1:
                             # we need to search by the whole chunk
                             num_successors = self.num_successors([ending, next_ending])
+                            old_num_successors = self.num_successors([ending])
                         else:
                             num_successors = self.num_successors(new_ending)
+                            old_num_successors = self.num_successors(ending)
 
-                        # if this new chunk has more words following it than the average
-                        if num_successors > self.avg_num_successors:
+                        # num_successors = self.num_successors(new_ending)
+
+                        # if this new chunk has more words following than [something]
+                        if num_successors >= old_num_successors * 0.2:
 
                             # turn the current chunk into the new chunk
                             self.root[new_ending] = deepcopy(self.root[ending][next_ending])
@@ -131,6 +136,9 @@ class EndingTrie(Trie):
 
         endings = Counter()
         sorted_endings = sorted(self.root.keys(), key=len, reverse=True)
+
+        # for word, count in self.words:
+        #     for ending in sorted_endings:
 
         for ending in sorted_endings:
             for word, count in deepcopy(self.words).items():
@@ -245,55 +253,61 @@ class StemEndingCounter:
 
         filtered_endings = self.filter_endings()
         for word, endings_trie in filtered_endings.items():
-            try:
-                (ending1, score1), (ending2, score2) = endings_trie.endings.most_common(2)
-            except ValueError:
-                # there is only one top ending
-                association_strengths[word] = 1
-                continue
-
-            association_strength = 1 / (score1 / score2)
+            top_ending, top_score = endings_trie.endings.most_common(1)[0]
+            all_endings = sum(endings_trie.endings.values())
+            association_strength = top_score / all_endings
             association_scores.append(association_strength)
             association_strengths[word] = association_strength
 
             for ending, _ in endings_trie.endings.most_common(5):
-                for endings_trie2 in self.words_endings.values():
-                    if ending in endings_trie2.endings:
+                for word2, endings_trie2 in self.words_endings.items():
+                    if ending in endings_trie2.endings and word != word2 :
                         ending_counter[ending] += 1
 
         avg_association_strength = mean(association_strengths.values())
 
-        sum_all_endings = sum(ending_counter.values())
-        uniqueness_scores = {ending: 1 - score / sum_all_endings
-                             for ending, score in ending_counter.items()}
+
+        # take the inverse log probability
+        uniqueness_scores = {ending: -log2(frequency)
+                             for ending, frequency in ending_counter.items()}
+        # sum_all_endings = sum(ending_counter.values())
+        # uniqueness_scores = {ending: 1 - score / sum_all_endings
+        #                      for ending, score in ending_counter.items()}
 
         # prioritize each ending based on its uniqueness score
         prioritized_endings = {}
         for word, endings_trie in filtered_endings.items():
+            prevalence = sum(endings_trie.endings.values())
             if association_strengths[word] > avg_association_strength:
                 # the force is strong in this one
-                endings_word = {ending: count
+                endings_word = {ending: (count, prevalence)
                                 for ending, count
-                                in endings_trie.endings.most_common(3)}
+                                in endings_trie.endings.most_common(5)}
             else:
-                endings_word = {ending: uniqueness_scores[ending]
-                                for ending, _
-                                in endings_trie.endings.most_common(3)}
+                try:
+                    endings_word = {ending: (uniqueness_scores[ending], prevalence)
+                                    for ending, _
+                                    in endings_trie.endings.most_common(5)}
+                except KeyError as e:
+                    # the ending hasn't been assigned a score
+                    pass
             prioritized_endings[word] = endings_word
 
         return prioritized_endings
 
-    def most_common_unique(self):
+    def most_common_prioritized(self):
         prioritized_endings = self.prioritize_endings()
         sorted_words = []
         for word, ending_scores in prioritized_endings.items():
-            unreversed_endings = [(''.join(reversed(ending)), score)
-                                  for ending, score
+
+            # take the top three ending and change them back to normal order (ltr or rtl)
+            unreversed_endings = [(''.join(reversed(ending)), plog, prevalence)
+                                  for ending, (plog, prevalence)
                                   in sorted(ending_scores.items(),
                                             key=lambda item: item[1],
-                                            reverse=True)]
-            sorted_words.append((word,
-                                 unreversed_endings))
+                                            reverse=True)[:3]]
+
+            sorted_words.append((word, unreversed_endings))
 
         sorted_words = sorted(sorted_words, key=lambda item: item[1], reverse=True)
         return sorted_words
@@ -308,7 +322,7 @@ def group_data(lines):
 
     return stem_ending_counter
 
-def write_results(grouped_data, stream):
+def write_results(grouped_data: StemEndingCounter, stream):
     for word, endings, preference, occurrence in grouped_data.most_common():
         print(word, end='\t', file=stream)
         print(*endings, end='\t', file=stream)
@@ -317,8 +331,11 @@ def write_results(grouped_data, stream):
 
     print('\n', '-'*10, '\n', file=stream)
 
-    for item in grouped_data.most_common_unique():
-        print(*item, file=stream)
+    for word, endings in grouped_data.most_common_prioritized():
+        print('{}:'.format(word), end='\t', file=stream)
+        for (ending, plog, prevalence) in endings:
+            print('{}: {:.2f}'.format(ending, plog), end='\t', file=stream)
+        print(file=stream)
 
 def filter_rare_words(words) -> filter:
     avg_occurrence = mean(words.count(w) for w in words)
@@ -337,14 +354,14 @@ def run(filename, linelength=None):
     current_line = []
 
     if linelength:
-        linelength = lambda: linelength
+        line_length = lambda: linelength
     else:
-        linelength = partial(randint, 5, 15)
+        line_length = partial(randint, 5, 15)
 
     for n, word in enumerate(words):
         # split the words into 'sentences' arbitrarily
         # NOTE: this number **significantly** affects the outcome
-        if n % linelength() == 0:
+        if n % line_length() == 0:
             lines.append(current_line)
             current_line = []
         current_line.append(word)
