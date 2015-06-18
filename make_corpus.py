@@ -13,7 +13,7 @@ arg_parser.add_argument('file')
 arg_parser.add_argument('output')
 args = arg_parser.parse_args()
 
-words_re = r'\b[^\W\d_]+\b'
+words_re = r'\w+'
 
 with open(args.file) as file:
     data = file.read()
