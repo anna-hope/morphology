@@ -7,7 +7,7 @@ It has no dependencies other than Python 3.4+
 
 ## Example usage
 
-```python3 morphology.py corpora/eng/small_webster.txt 5 -o output.txt```
+```python3 morphology.py corpora/eng/short_webster.txt 5 -o output.txt```
 
 The output file will begin with some statistics about the identified morphemes,
 and then will include every word in the word list, segmented first left-to-right,
