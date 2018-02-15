@@ -1,4 +1,4 @@
-## Morphology
+## Morph o logy
 
 This repository hosts an algorithm that, given a plaintext word list,
 attempts to split every word into morphemes (if any). 
