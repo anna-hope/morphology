@@ -17,7 +17,7 @@ and then right-to-left. In that way, it can potentially identify both suffixes a
 
 The algorithm does so by building up a Patricia trie from the corpus,
 and then selects every non-terminal chunk within the trie as a constituent morpheme.
-Prefixes shorter than the given length (usually 4 or 5) are considered, 
+Prefixes shorter than the given length (usually 4 or 5) are considered stems, 
 and are not segmented.
 
 The core of the algorithm was proposed by Zellig Harris, and subsequently adapted 
